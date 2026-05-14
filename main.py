@@ -9,10 +9,9 @@ app = FastAPI(title="Panchang API")
 tf = TimezoneFinder()
 
 
-class Location(BaseModel):
-    lat: float
-    lon: float
+from typing import Optional
 
+from fastapi import Query
 
 # Set Lahiri Ayanamsa
 swe.set_sid_mode(swe.SIDM_LAHIRI)
@@ -33,6 +32,20 @@ NAKSHATRA_NAMES = [
     "Vishakha", "Anuradha", "Jyeshtha", "Mula", "Purva Ashadha",
     "Uttara Ashadha", "Shravana", "Dhanishta", "Shatabhisha", "Purva Bhadrapada",
     "Uttara Bhadrapada", "Revati"
+]
+
+YOGA_NAMES = [
+    "Vishkambha", "Priti", "Ayushman", "Saubhagya", "Shobhana",
+    "Atiganda", "Sukarma", "Dhriti", "Shula", "Ganda",
+    "Vriddhi", "Dhruva", "Vyaghata", "Harshana", "Vajra",
+    "Siddhi", "Vyatipata", "Variyan", "Parigha", "Shiva",
+    "Siddha", "Sadhya", "Shubha", "Shukla", "Brahma",
+    "Indra", "Vaidhriti"
+]
+
+KARANA_NAMES = [
+    "Bava", "Balava", "Kaulava", "Taitila", "Gara", "Vanija", "Vishti",
+    "Shakuni", "Chatushpada", "Naga", "Kintughna"
 ]
 
 TELUGU_MONTHS = [
@@ -72,6 +85,86 @@ def calculate_nakshatra(moon_lon):
     nakshatra_index = int(moon_lon / (360 / 27.0))
     return NAKSHATRA_NAMES[nakshatra_index]
 
+def get_tithi_index(sun_lon, moon_lon):
+    diff = moon_lon - sun_lon
+    if diff < 0:
+        diff += 360
+    return int(diff / 12)
+
+def get_nakshatra_index(sun_lon, moon_lon):
+    return int(moon_lon / (360 / 27.0))
+
+def get_yoga_index(sun_lon, moon_lon):
+    total = sun_lon + moon_lon
+    if total >= 360:
+        total -= 360
+    return int(total / (360 / 27.0))
+
+def get_karana_index(sun_lon, moon_lon):
+    diff = moon_lon - sun_lon
+    if diff < 0:
+        diff += 360
+    k_index = int(diff / 6)
+    if k_index == 0:
+        return 10
+    elif k_index >= 57:
+        return k_index - 50
+    else:
+        return (k_index - 1) % 7
+
+def find_transitions(start_jd, end_jd, get_index_func, get_name_func):
+    transitions = []
+    step = 1.0 / 24.0
+
+    curr_jd = start_jd
+    sun_lon, moon_lon = get_positions(curr_jd)
+    curr_index = get_index_func(sun_lon, moon_lon)
+
+    transitions.append({"name": get_name_func(curr_index), "start_time": None})
+
+    while curr_jd < end_jd:
+        next_jd = curr_jd + step
+        if next_jd > end_jd:
+            next_jd = end_jd
+
+        s_lon, m_lon = get_positions(next_jd)
+        next_index = get_index_func(s_lon, m_lon)
+
+        if next_index != curr_index:
+            low, high = curr_jd, next_jd
+            for _ in range(15):
+                mid = (low + high) / 2
+                s_mid, m_mid = get_positions(mid)
+                mid_index = get_index_func(s_mid, m_mid)
+                if mid_index == curr_index:
+                    low = mid
+                else:
+                    high = mid
+
+            trans_jd = high
+            transitions[-1]["end_time"] = trans_jd
+            transitions.append({"name": get_name_func(next_index), "start_time": trans_jd})
+            curr_index = next_index
+
+        curr_jd = next_jd
+
+    transitions[-1]["end_time"] = None
+    return transitions
+
+def format_time(jd, tz):
+    if jd is None:
+        return None
+    dt = swe.revjul(jd)
+    # revjul returns (year, month, day, hour (float))
+    year, month, day, hours = dt
+    h = int(hours)
+    m = int((hours - h) * 60)
+    s = int(((hours - h) * 60 - m) * 60)
+
+    # create utc datetime
+    utc_dt = datetime.datetime(year, month, day, h, m, s, tzinfo=pytz.utc)
+    return utc_dt.astimezone(tz).strftime("%I:%M %p")
+
 def get_telugu_year(year):
     index = (year - 1987) % 60
     return TELUGU_YEARS[index]
@@ -79,9 +172,136 @@ def get_telugu_year(year):
 def get_ritu(month_index):
     return RITU_NAMES[(month_index) // 2 % 6]
 
-@app.post("/panchang")
-def get_panchang(location: Location):
-    timezone_str = tf.timezone_at(lng=location.lon, lat=location.lat)
+def get_ayana(jd):
+    sun_pos = swe.calc_ut(jd, swe.SUN, swe.FLG_MOSEPH)
+    sun_lon_tropical = sun_pos[0][0]
+    if 90 <= sun_lon_tropical < 270:
+        return "Dakshinayana"
+    else:
+        return "Uttarayana"
+
+def get_sunrise_sunset(jd, lat, lon):
+    swe.set_topo(lon, lat, 0)
+    res_rise = swe.rise_trans(jd - 0.5, swe.SUN, swe.CALC_RISE, (lon, lat, 0), 0.0, 0.0, swe.FLG_MOSEPH)
+    sunrise_jd = res_rise[1][0]
+    res_set = swe.rise_trans(sunrise_jd, swe.SUN, swe.CALC_SET, (lon, lat, 0), 0.0, 0.0, swe.FLG_MOSEPH)
+    sunset_jd = res_set[1][0]
+    return sunrise_jd, sunset_jd
+
+def get_rahu_kalam(sunrise_jd, sunset_jd, weekday):
+    day_duration = sunset_jd - sunrise_jd
+    segment = day_duration / 8.0
+    segments = [2, 7, 5, 6, 4, 3, 8] # Mon to Sun
+    seg_idx = segments[weekday] - 1
+    start = sunrise_jd + seg_idx * segment
+    end = start + segment
+    return start, end
+
+@app.get("/panchang/detailed")
+def get_detailed_panchang(
+    lat: float = Query(12.8242912),
+    lon: float = Query(77.6875076),
+    date: Optional[datetime.date] = Query(None),
+    month_type: str = Query("amanta")
+):
+    timezone_str = tf.timezone_at(lng=lon, lat=lat)
+    if not timezone_str:
+        timezone_str = "UTC"
+    tz = pytz.timezone(timezone_str)
+
+    if date is None:
+        target_date = datetime.datetime.now(tz).date()
+    else:
+        target_date = date
+
+    start_dt = tz.localize(datetime.datetime.combine(target_date, datetime.time.min))
+    start_utc = start_dt.astimezone(pytz.utc)
+
+    end_dt = start_dt + datetime.timedelta(days=1)
+    end_utc = end_dt.astimezone(pytz.utc)
+
+    start_jd = swe.julday(start_utc.year, start_utc.month, start_utc.day, start_utc.hour + start_utc.minute/60.0 + start_utc.second/3600.0)
+    end_jd = swe.julday(end_utc.year, end_utc.month, end_utc.day, end_utc.hour + end_utc.minute/60.0 + end_utc.second/3600.0)
+
+    sr_jd, ss_jd = get_sunrise_sunset(start_jd + 0.5, lat, lon)
+    sunrise = format_time(sr_jd, tz)
+    sunset = format_time(ss_jd, tz)
+
+    rk_start, rk_end = get_rahu_kalam(sr_jd, ss_jd, target_date.weekday())
+
+    tithi_name_func = lambda idx: f"{'Shukla' if idx < 15 else 'Krishna'} {TITHI_NAMES[idx]}"
+    tithis = find_transitions(start_jd, end_jd, get_tithi_index, tithi_name_func)
+
+    nakshatras = find_transitions(start_jd, end_jd, get_nakshatra_index, lambda idx: NAKSHATRA_NAMES[idx])
+    yogas = find_transitions(start_jd, end_jd, get_yoga_index, lambda idx: YOGA_NAMES[idx])
+    karanas = find_transitions(start_jd, end_jd, get_karana_index, lambda idx: KARANA_NAMES[idx])
+
+    # Month calculation
+    # For amanta, month changes at Amavasya.
+    # For poornimanta, month changes at Purnima.
+    sun_lon, moon_lon = get_positions(sr_jd)
+    diff = moon_lon - sun_lon
+    if diff < 0: diff += 360
+    days_since_new_moon = diff / 12.0
+    jd_new_moon = sr_jd - days_since_new_moon
+
+    # Sun pos at middle of the amanta month determines the name
+    jd_full_moon = jd_new_moon + 14.76
+    sun_lon_mid_month, _ = get_positions(jd_full_moon)
+    amanta_month_index = int(sun_lon_mid_month / 30)
+
+    if month_type.lower() == "poornimanta":
+        # Poornimanta month starts a fortnight earlier than Amanta
+        month_index = (amanta_month_index + 1) % 12
+    else:
+        month_index = amanta_month_index % 12
+
+    month_name = TELUGU_MONTHS[month_index]
+    ritu = get_ritu(amanta_month_index % 12)
+    ayana = get_ayana(sr_jd)
+
+    # Paksha
+    tithi_index = get_tithi_index(sun_lon, moon_lon)
+    paksha = "Shukla" if tithi_index < 15 else "Krishna"
+
+    # Year
+    year = target_date.year
+    if target_date.month < 3 or (target_date.month == 3 and amanta_month_index >= 10):
+        year -= 1
+    elif target_date.month == 4 and amanta_month_index >= 10:
+        year -= 1
+    telugu_year = get_telugu_year(year)
+
+    # Format transitions
+    def format_transitions(trans_list):
+        for item in trans_list:
+            item["start_time"] = format_time(item["start_time"], tz)
+            item["end_time"] = format_time(item["end_time"], tz)
+        return trans_list
+
+    return {
+        "date": target_date.isoformat(),
+        "month_type": month_type,
+        "telugu_year": telugu_year,
+        "telugu_month": month_name,
+        "paksha": paksha,
+        "ritu": ritu,
+        "ayana": ayana,
+        "sunrise": sunrise,
+        "sunset": sunset,
+        "rahu_kalam": f"{format_time(rk_start, tz)} - {format_time(rk_end, tz)}",
+        "tithis": format_transitions(tithis),
+        "nakshatras": format_transitions(nakshatras),
+        "yogas": format_transitions(yogas),
+        "karanas": format_transitions(karanas)
+    }
+
+@app.get("/panchang")
+def get_panchang(
+    lat: float = Query(12.8242912),
+    lon: float = Query(77.6875076)
+):
+    timezone_str = tf.timezone_at(lng=lon, lat=lat)
     if not timezone_str:
         timezone_str = "UTC"
 
