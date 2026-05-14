@@ -245,7 +245,7 @@ def get_detailed_panchang(
 ):
     timezone_str = tf.timezone_at(lng=lon, lat=lat)
     if not timezone_str:
-        timezone_str = "UTC"
+        timezone_str = "Asia/Kolkata"
     tz = pytz.timezone(timezone_str)
 
     if date is None:
@@ -332,7 +332,7 @@ def get_panchang(
 ):
     timezone_str = tf.timezone_at(lng=lon, lat=lat)
     if not timezone_str:
-        timezone_str = "UTC"
+        timezone_str = "Asia/Kolkata"
 
     tz = pytz.timezone(timezone_str)
     now = datetime.datetime.now(tz)
