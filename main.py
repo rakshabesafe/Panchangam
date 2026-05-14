@@ -343,6 +343,7 @@ def get_panchang(
     sr_jd, ss_jd = get_sunrise_sunset(jd, lat, lon)
     sun_lon_sr, moon_lon_sr = get_positions(sr_jd)
     tithi_at_sunrise = calculate_tithi(sun_lon_sr, moon_lon_sr)
+    nakshatra_at_sunrise = calculate_nakshatra(moon_lon_sr)
 
     sun_lon, moon_lon = get_positions(jd)
     tithi = calculate_tithi(sun_lon, moon_lon)
@@ -364,6 +365,7 @@ def get_panchang(
         "tithi": tithi,
         "tithi_at_sunrise": tithi_at_sunrise,
         "nakshatra": nakshatra,
+        "nakshatra_at_sunrise": nakshatra_at_sunrise,
         "telugu_month": month_name,
         "ritu": ritu,
         "telugu_year": telugu_year
