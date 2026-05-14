@@ -238,10 +238,10 @@ def get_rahu_kalam(sunrise_jd, sunset_jd, weekday):
 
 @app.get("/panchang/detailed")
 def get_detailed_panchang(
-    lat: float = Query(12.8242912),
-    lon: float = Query(77.6875076),
-    date: Optional[datetime.date] = Query(None),
-    month_type: str = Query("amanta")
+    lat: float = Query(12.8242912, description="Latitude of the location", examples=[17.3850]),
+    lon: float = Query(77.6875076, description="Longitude of the location", examples=[78.4867]),
+    date: Optional[datetime.date] = Query(None, description="Date for which to calculate Panchang in YYYY-MM-DD format. Defaults to today.", examples=["2025-05-14"]),
+    month_type: str = Query("amanta", description="Type of the lunar month system to use. Valid options: 'amanta' or 'poornimanta'", examples=["amanta"])
 ):
     timezone_str = tf.timezone_at(lng=lon, lat=lat)
     if not timezone_str:
@@ -278,8 +278,13 @@ def get_detailed_panchang(
     # Month calculation
     amanta_month_index = get_amanta_month_index(sr_jd)
 
-    if month_type.lower() == "poornimanta":
-        # Poornimanta month starts a fortnight earlier than Amanta
+    # Paksha
+    sun_lon, moon_lon = get_positions(sr_jd)
+    tithi_index = get_tithi_index(sun_lon, moon_lon)
+    paksha = "Shukla" if tithi_index < 15 else "Krishna"
+
+    if month_type.lower() == "poornimanta" and paksha == "Krishna":
+        # Poornimanta month starts a fortnight earlier than Amanta during Krishna Paksha
         month_index = (amanta_month_index + 1) % 12
     else:
         month_index = amanta_month_index % 12
@@ -287,11 +292,6 @@ def get_detailed_panchang(
     month_name = TELUGU_MONTHS[month_index]
     ritu = get_ritu(amanta_month_index % 12)
     ayana = get_ayana(sr_jd)
-
-    # Paksha
-    sun_lon, moon_lon = get_positions(sr_jd)
-    tithi_index = get_tithi_index(sun_lon, moon_lon)
-    paksha = "Shukla" if tithi_index < 15 else "Krishna"
 
     # Year
     year = target_date.year
@@ -327,8 +327,8 @@ def get_detailed_panchang(
 
 @app.get("/panchang")
 def get_panchang(
-    lat: float = Query(12.8242912),
-    lon: float = Query(77.6875076)
+    lat: float = Query(12.8242912, description="Latitude of the location", examples=[17.3850]),
+    lon: float = Query(77.6875076, description="Longitude of the location", examples=[78.4867])
 ):
     timezone_str = tf.timezone_at(lng=lon, lat=lat)
     if not timezone_str:
