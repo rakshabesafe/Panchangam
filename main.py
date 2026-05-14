@@ -219,9 +219,10 @@ def get_ayana(jd):
     else:
         return "Uttarayana"
 
-def get_sunrise_sunset(jd, lat, lon):
+def get_sunrise_sunset(start_jd, lat, lon):
     swe.set_topo(lon, lat, 0)
-    res_rise = swe.rise_trans(jd - 0.5, swe.SUN, swe.CALC_RISE, (lon, lat, 0), 0.0, 0.0, swe.FLG_MOSEPH)
+    # search from local midnight (start_jd) to get today's sunrise
+    res_rise = swe.rise_trans(start_jd, swe.SUN, swe.CALC_RISE, (lon, lat, 0), 0.0, 0.0, swe.FLG_MOSEPH)
     sunrise_jd = res_rise[1][0]
     res_set = swe.rise_trans(sunrise_jd, swe.SUN, swe.CALC_SET, (lon, lat, 0), 0.0, 0.0, swe.FLG_MOSEPH)
     sunset_jd = res_set[1][0]
@@ -262,7 +263,7 @@ def get_detailed_panchang(
     start_jd = swe.julday(start_utc.year, start_utc.month, start_utc.day, start_utc.hour + start_utc.minute/60.0 + start_utc.second/3600.0)
     end_jd = swe.julday(end_utc.year, end_utc.month, end_utc.day, end_utc.hour + end_utc.minute/60.0 + end_utc.second/3600.0)
 
-    sr_jd, ss_jd = get_sunrise_sunset(start_jd + 0.5, lat, lon)
+    sr_jd, ss_jd = get_sunrise_sunset(start_jd, lat, lon)
     sunrise = format_time(sr_jd, tz)
     sunset = format_time(ss_jd, tz)
 
@@ -340,7 +341,11 @@ def get_panchang(
 
     jd = swe.julday(now_utc.year, now_utc.month, now_utc.day, now_utc.hour + now_utc.minute/60.0 + now_utc.second/3600.0)
 
-    sr_jd, ss_jd = get_sunrise_sunset(jd, lat, lon)
+    start_dt = tz.localize(datetime.datetime.combine(now.date(), datetime.time.min))
+    start_utc = start_dt.astimezone(pytz.utc)
+    start_jd = swe.julday(start_utc.year, start_utc.month, start_utc.day, start_utc.hour + start_utc.minute/60.0 + start_utc.second/3600.0)
+
+    sr_jd, ss_jd = get_sunrise_sunset(start_jd, lat, lon)
     sun_lon_sr, moon_lon_sr = get_positions(sr_jd)
     tithi_at_sunrise = calculate_tithi(sun_lon_sr, moon_lon_sr)
     nakshatra_at_sunrise = calculate_nakshatra(moon_lon_sr)
