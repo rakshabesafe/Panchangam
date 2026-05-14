@@ -55,8 +55,9 @@ TELUGU_YEARS = [
 
 def get_positions(jd):
     swe.set_sid_mode(swe.SIDM_LAHIRI)
-    sun_pos = swe.calc_ut(jd, swe.SUN, swe.FLG_SWIEPH | swe.FLG_SIDEREAL)
-    moon_pos = swe.calc_ut(jd, swe.MOON, swe.FLG_SWIEPH | swe.FLG_SIDEREAL)
+    # Using FLG_MOSEPH as fallback since SWIEPH files might not be available in serverless environments
+    sun_pos = swe.calc_ut(jd, swe.SUN, swe.FLG_MOSEPH | swe.FLG_SIDEREAL)
+    moon_pos = swe.calc_ut(jd, swe.MOON, swe.FLG_MOSEPH | swe.FLG_SIDEREAL)
     return sun_pos[0][0], moon_pos[0][0]
 
 def calculate_tithi(sun_lon, moon_lon):
