@@ -172,6 +172,45 @@ def get_telugu_year(year):
 def get_ritu(month_index):
     return RITU_NAMES[(month_index) // 2 % 6]
 
+def get_exact_new_moon(target_jd):
+    sun_lon, moon_lon = get_positions(target_jd)
+    diff = moon_lon - sun_lon
+    if diff < 0: diff += 360
+
+    days_since = diff / 12.0
+    approx_nm_jd = target_jd - days_since
+
+    low = approx_nm_jd - 2.0
+    high = approx_nm_jd + 2.0
+
+    for _ in range(20):
+        mid = (low + high) / 2
+        sl, ml = get_positions(mid)
+        df = ml - sl
+        if df < 0: df += 360
+
+        if df < 180:
+            high = mid
+        else:
+            low = mid
+
+    return high
+
+def get_amanta_month_index(jd):
+    nm_jd = get_exact_new_moon(jd)
+
+    curr_jd = nm_jd
+    sl, _ = get_positions(curr_jd)
+    current_sign = int(sl / 30)
+
+    for d in range(1, 35):
+        sl_next, _ = get_positions(curr_jd + d)
+        next_sign = int(sl_next / 30)
+        if next_sign != current_sign:
+            return next_sign
+
+    return current_sign
+
 def get_ayana(jd):
     sun_pos = swe.calc_ut(jd, swe.SUN, swe.FLG_MOSEPH)
     sun_lon_tropical = sun_pos[0][0]
@@ -237,18 +276,7 @@ def get_detailed_panchang(
     karanas = find_transitions(start_jd, end_jd, get_karana_index, lambda idx: KARANA_NAMES[idx])
 
     # Month calculation
-    # For amanta, month changes at Amavasya.
-    # For poornimanta, month changes at Purnima.
-    sun_lon, moon_lon = get_positions(sr_jd)
-    diff = moon_lon - sun_lon
-    if diff < 0: diff += 360
-    days_since_new_moon = diff / 12.0
-    jd_new_moon = sr_jd - days_since_new_moon
-
-    # Sun pos at middle of the amanta month determines the name
-    jd_full_moon = jd_new_moon + 14.76
-    sun_lon_mid_month, _ = get_positions(jd_full_moon)
-    amanta_month_index = int(sun_lon_mid_month / 30)
+    amanta_month_index = get_amanta_month_index(sr_jd)
 
     if month_type.lower() == "poornimanta":
         # Poornimanta month starts a fortnight earlier than Amanta
@@ -261,6 +289,7 @@ def get_detailed_panchang(
     ayana = get_ayana(sr_jd)
 
     # Paksha
+    sun_lon, moon_lon = get_positions(sr_jd)
     tithi_index = get_tithi_index(sun_lon, moon_lon)
     paksha = "Shukla" if tithi_index < 15 else "Krishna"
 
@@ -311,35 +340,29 @@ def get_panchang(
 
     jd = swe.julday(now_utc.year, now_utc.month, now_utc.day, now_utc.hour + now_utc.minute/60.0 + now_utc.second/3600.0)
 
-    sun_lon, moon_lon = get_positions(jd)
+    sr_jd, ss_jd = get_sunrise_sunset(jd, lat, lon)
+    sun_lon_sr, moon_lon_sr = get_positions(sr_jd)
+    tithi_at_sunrise = calculate_tithi(sun_lon_sr, moon_lon_sr)
 
+    sun_lon, moon_lon = get_positions(jd)
     tithi = calculate_tithi(sun_lon, moon_lon)
     nakshatra = calculate_nakshatra(moon_lon)
 
-    diff = moon_lon - sun_lon
-    if diff < 0:
-        diff += 360
-
-    days_since_new_moon = diff / 12.0
-    jd_new_moon = jd - days_since_new_moon
-
-    jd_full_moon = jd_new_moon + 14.76
-    sun_lon_mid_month, _ = get_positions(jd_full_moon)
-
-    month_index = int(sun_lon_mid_month / 30)
-    month_name = TELUGU_MONTHS[month_index % 12]
-    ritu = get_ritu(month_index % 12)
+    amanta_month_index = get_amanta_month_index(jd)
+    month_name = TELUGU_MONTHS[amanta_month_index % 12]
+    ritu = get_ritu(amanta_month_index % 12)
 
     year = now.year
-    if now.month < 3 or (now.month == 3 and month_index >= 10):
+    if now.month < 3 or (now.month == 3 and amanta_month_index >= 10):
         year -= 1
-    elif now.month == 4 and month_index >= 10:
+    elif now.month == 4 and amanta_month_index >= 10:
         year -= 1
 
     telugu_year = get_telugu_year(year)
 
     return {
         "tithi": tithi,
+        "tithi_at_sunrise": tithi_at_sunrise,
         "nakshatra": nakshatra,
         "telugu_month": month_name,
         "ritu": ritu,
